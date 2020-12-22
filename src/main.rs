@@ -1,9 +1,8 @@
-use std::fmt;
 use std::fs::File;
 use std::io::prelude::*;
-use std::io::{self, BufReader};
+use std::io::{BufReader, Result};
 
-fn main() -> io::Result<()> {
+fn main() -> Result<()> {
     let f = File::open("data/to_format.csv")?;
     let f = BufReader::new(f);
     let iter = f.lines().skip(5);
@@ -12,7 +11,7 @@ fn main() -> io::Result<()> {
     let f2 = BufReader::new(f2);
     let iter = iter.chain(f2.lines().skip(5));
 
-    let mut new_file = File::create("data/result_all_v2.csv")?;
+    let mut new_file = File::create("data/result_all_v3.csv")?;
     new_file.write_all(b"DATE;JOURNAL;GENERAL;AUXILIAIRE;LIBELLE;SENS;MONTANT\r\n")?;
 
     for line in iter {
@@ -22,100 +21,53 @@ fn main() -> io::Result<()> {
             //.inspect(|s| println!("{}", s))
             .collect();
 
-        let data: Vec<Entry> = v
-            .chunks_exact(5)
-            .map(|input| {
-                let debit = input[3].replace(',', ".").parse::<f32>();
-                let credit = input[4].replace(',', ".").parse::<f32>();
-
-                let mut sens = "D";
-                let mut amount = 0f32;
-
-                if let Ok(value) = debit {
-                    sens = "D";
-                    amount = value * -1f32;
-                } else if let Ok(value) = credit {
-                    sens = "C";
-                    amount = value;
-                } else {
-                    panic!("not debit nor credit")
-                };
-
-                Entry {
-                    date: input[0].clone(),
-                    journal: String::from("BNP"),
-                    libelle: input[2].clone(),
-                    sens: String::from(sens),
-                    amount: amount.to_string().replace('.', ","),
-                }
-            })
-            .collect();
-
-        for (i, e) in data.iter().enumerate() {
-            let i = i + 1;
-
-            new_file.write_all(std::format!("{};", e.date.replace('/', "")).as_bytes())?;
-            new_file.write_all(b"BNP;")?;
-            new_file.write_all(b"471000;")?;
-            new_file.write_all(b";")?;
-            new_file.write_all(std::format!("{};", e.libelle).as_bytes())?;
-
-            if e.sens == "C" {
-                new_file.write_all(b"C;")?;
-            } else {
-                new_file.write_all(b"D;")?;
-            }
-
-            new_file.write_all(std::format!("{}", e.amount).as_bytes())?;
-
-            new_file.write_all(b"\r\n")?;
-
-            // next line
-            new_file.write_all(std::format!("{};", e.date.replace('/', "")).as_bytes())?;
-            new_file.write_all(b"BNP;")?;
-            new_file.write_all(b"512000;")?;
-            new_file.write_all(b";")?;
-            new_file.write_all(std::format!("{};", e.libelle).as_bytes())?;
-
-            if e.sens == "C" {
-                new_file.write_all(b"D;")?;
-            } else {
-                new_file.write_all(b"C;")?;
-            }
-
-            new_file.write_all(std::format!("{}", e.amount).as_bytes())?;
-
-            new_file.write_all(b"\r\n")?;
-        }
+        v.chunks_exact(5)
+            .map(map_input_data_to_entry)
+            .map(map_entry_to_output_format)
+            .for_each(|lines| new_file.write_all(lines.as_bytes()).unwrap());
     }
 
     Ok(())
 }
 
-// fn map_data_to_entry(input: &[&str]) {
-//     let (sens, amount) = if let Ok(debit) = i32::from_str_radix(&input[3], 10) {
-//         ("D", debit * -1)
-//     } else if let Ok(credit) = i32::from_str_radix(&input[4], 10) {
-//         ("C", credit)
-//     } else {
-//         panic!("not debit nor credit");
-//     };
+fn map_input_data_to_entry(input: &[String]) -> Entry {
+    Entry {
+        date: input[0].clone(),
+        libelle: input[2].clone(),
+        amount: input[3].replace(',', ".").parse::<f32>().unwrap_or(0f32)
+            + input[4].replace(',', ".").parse::<f32>().unwrap_or(0f32),
+    }
+}
 
-//     Entry {
-//         date: input[0].clone(),
-//         journal: "BNP",
-//         sens: sens,
-//         amount: amount,
-//     }
-// }
+fn map_entry_to_output_format(entry: Entry) -> String {
+    let first_line: String = format!(
+        "{DATE};{JOURNAL};{GENERAL};{AUXILIAIRE};{LIBELLE};{SENS};{MONTANT}",
+        DATE = entry.date.replace('/', ""),
+        JOURNAL = "BNP",
+        GENERAL = "471000",
+        AUXILIAIRE = "",
+        LIBELLE = entry.libelle,
+        SENS = if entry.amount > 0f32 { "C" } else { "D" },
+        MONTANT = entry.amount.abs().to_string().replace('.', ",")
+    );
+
+    let second_line: String = format!(
+        "{DATE};{JOURNAL};{GENERAL};{AUXILIAIRE};{LIBELLE};{SENS};{MONTANT}",
+        DATE = entry.date.replace('/', ""),
+        JOURNAL = "BNP",
+        GENERAL = "512000",
+        AUXILIAIRE = "",
+        LIBELLE = entry.libelle,
+        SENS = if entry.amount > 0f32 { "D" } else { "C" },
+        MONTANT = entry.amount.abs().to_string().replace('.', ",")
+    );
+
+    format!("{}\r\n{}\r\n", first_line, second_line)
+}
 
 #[derive(Debug)]
 struct Entry {
     date: String,
-    journal: String,
-    //general: String,
-    //auxiliaire: String,
-    sens: String,
-    amount: String,
     libelle: String,
+    amount: f32,
 }
